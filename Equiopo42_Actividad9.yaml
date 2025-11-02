@@ -2,11 +2,13 @@ openapi: 3.0.3
 
 info:
   title: Smart Meeting Assistant API
-  version: "1.0.0"
+  version: "1.0.1"
   description: >
     API del Smart Meeting Assistant (SMA). Permite registrar usuarios, proponer
     reuniones, administrar participantes, almacenar resúmenes y generar tareas
     de seguimiento.
+    Todas las fechas y horas usan el formato ISO 8601 con zona horaria obligatoria
+    (por ejemplo: 2025-11-01T10:00:00-06:00 o 2025-11-01T16:00:00Z).
   contact:
     name: |
       Equipo 42
@@ -14,7 +16,6 @@ info:
       José Montante - A01150895
       Hector Jorge Morales Arch - A01796487
       Carlos Del Castillo Rey - A01796595
-    
 
 servers:
   - url: https://firestore.googleapis.com/v1/projects/smart-meeting-assistant-1a3c8/databases/(default)/documents/
@@ -43,9 +44,18 @@ paths:
                   $ref: "#/components/schemas/User"
         "400":
           description: Parámetros inválidos
+        "429":
+          description: Límite de solicitudes excedido
     post:
       summary: Crear usuario
       description: Registra un nuevo usuario/participante en el sistema.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema:
+            type: string
+          description: Clave idempotente para evitar duplicados en reintentos.
       requestBody:
         required: true
         content:
@@ -59,8 +69,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/User"
+        "200":
+          description: Reintento idempotente: usuario ya creado previamente con la misma clave
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
         "400":
           description: Datos incompletos o inválidos
+        "429":
+          description: Límite de solicitudes excedido
 
   /users/{userId}:
     get:
@@ -107,6 +125,8 @@ paths:
           description: Datos inválidos
         "404":
           description: Usuario no encontrado
+        "429":
+          description: Límite de solicitudes excedido
 
   /meetings:
     get:
@@ -119,14 +139,14 @@ paths:
           schema:
             type: string
             format: date-time
-          description: Incluir reuniones que inician a partir de esta marca de tiempo (ISO8601).
+          description: Incluir reuniones que inician a partir de esta marca de tiempo (ISO 8601 con zona horaria).
         - in: query
           name: to
           required: false
           schema:
             type: string
             format: date-time
-          description: Incluir reuniones que terminan antes de esta marca de tiempo (ISO8601).
+          description: Incluir reuniones que terminan antes de esta marca de tiempo (ISO 8601 con zona horaria).
         - in: query
           name: organizerId
           required: false
@@ -144,9 +164,18 @@ paths:
                   $ref: "#/components/schemas/Meeting"
         "400":
           description: Parámetros inválidos
+        "429":
+          description: Límite de solicitudes excedido
     post:
       summary: Crear reunión
       description: Crea una reunión propuesta por el asistente.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema:
+            type: string
+          description: Clave idempotente para evitar duplicados en reintentos.
       requestBody:
         required: true
         content:
@@ -160,8 +189,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Meeting"
+        "200":
+          description: Reintento idempotente: la misma reunión ya fue creada con esa clave
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Meeting"
         "400":
           description: Datos inválidos
+        "409":
+          description: Conflicto de agenda (solapamiento con otra reunión confirmada)
+        "429":
+          description: Límite de solicitudes excedido
 
   /meetings/{meetingId}:
     get:
@@ -191,6 +230,12 @@ paths:
           required: true
           schema:
             type: string
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema:
+            type: string
+          description: Idempotencia para reintentos seguros.
       requestBody:
         required: true
         content:
@@ -208,6 +253,10 @@ paths:
           description: Datos inválidos
         "404":
           description: Reunión no encontrada
+        "409":
+          description: Conflicto de agenda al reprogramar (solapamiento)
+        "429":
+          description: Límite de solicitudes excedido
     delete:
       summary: Cancelar reunión
       parameters:
@@ -221,6 +270,8 @@ paths:
           description: Reunión cancelada/eliminada
         "404":
           description: Reunión no encontrada
+        "429":
+          description: Límite de solicitudes excedido
 
   /meetings/{meetingId}/summary:
     post:
@@ -232,6 +283,12 @@ paths:
           required: true
           schema:
             type: string
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema:
+            type: string
+          description: Idempotencia para evitar duplicados si se reintenta el guardado.
       requestBody:
         required: true
         content:
@@ -253,6 +310,8 @@ paths:
                 $ref: "#/components/schemas/Meeting"
         "404":
           description: Reunión no encontrada
+        "429":
+          description: Límite de solicitudes excedido
 
   /meetings/{meetingId}/action-items:
     get:
@@ -274,6 +333,8 @@ paths:
                   $ref: "#/components/schemas/Task"
         "404":
           description: Reunión no encontrada
+        "429":
+          description: Límite de solicitudes excedido
     post:
       summary: Crear action item en una reunión
       description: Crea una tarea de seguimiento asignable a un participante.
@@ -283,6 +344,12 @@ paths:
           required: true
           schema:
             type: string
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema:
+            type: string
+          description: Evita crear tareas duplicadas en reintentos.
       requestBody:
         required: true
         content:
@@ -296,32 +363,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Task"
+        "200":
+          description: Reintento idempotente: la tarea ya existía para esa clave
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
         "400":
           description: Datos inválidos
         "404":
           description: Reunión no encontrada
-
-  /availability/suggest:
-    post:
-      summary: Proponer horarios disponibles
-      description: Calcula bloques de tiempo recomendados en común entre varias personas.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AvailabilityRequest"
-      responses:
-        "200":
-          description: Slots sugeridos
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/AvailabilitySuggestion"
-        "400":
-          description: Datos inválidos (por ejemplo, sin participantes)
+        "429":
+          description: Límite de solicitudes excedido
 
 components:
   schemas:
@@ -364,10 +417,11 @@ components:
         startTime:
           type: string
           format: date-time
-          description: Hora de inicio propuesta/confirmada.
+          description: Hora de inicio propuesta/confirmada. Formato ISO 8601 con zona horaria.
         endTime:
           type: string
           format: date-time
+          description: Hora de fin propuesta/confirmada. Formato ISO 8601 con zona horaria.
         status:
           type: string
           enum: [tentative, scheduled, cancelled]
@@ -416,58 +470,13 @@ components:
         dueDate:
           type: string
           format: date
-          description: Fecha límite propuesta.
+          description: Fecha límite propuesta (formato ISO 8601).
         status:
           type: string
-          enum: [open, done]
+          enum: [open, in_progress, blocked, done, cancelled]
+          description: Estado de ejecución de la tarea.
       required:
         - id
         - description
         - ownerUserId
         - status
-
-    AvailabilityRequest:
-      type: object
-      description: Parámetros para buscar horarios comunes.
-      properties:
-        participantIds:
-          type: array
-          items:
-            type: string
-          description: IDs de usuarios que deben estar disponibles.
-        durationMinutes:
-          type: integer
-          example: 30
-          description: Duración deseada del bloque.
-        earliestStart:
-          type: string
-          format: date-time
-          description: No proponer horarios antes de esta fecha/hora.
-        latestEnd:
-          type: string
-          format: date-time
-          description: No proponer horarios después de esta fecha/hora.
-      required:
-        - participantIds
-        - durationMinutes
-        - earliestStart
-        - latestEnd
-
-    AvailabilitySuggestion:
-      type: object
-      description: Slot recomendado por el motor de disponibilidad.
-      properties:
-        slotStart:
-          type: string
-          format: date-time
-        slotEnd:
-          type: string
-          format: date-time
-        score:
-          type: number
-          format: float
-          description: Qué tan bueno es el slot (1.0 = ideal).
-      required:
-        - slotStart
-        - slotEnd
-        - score
